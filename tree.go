@@ -49,6 +49,7 @@ func (d *Data) idx(xref string) (id int) {
 	return
 }
 func (d *Data) ind(id int) (*gedcom.IndividualRecord) {
+	if id < 0 {return nil}
 	return d.g.Individual[id]
 }
 
@@ -229,21 +230,36 @@ type ChatResponse struct {
 	} `json:"error,omitempty"`
 }
 
+const xfunctionPrompt = `you have complete access to my family tree. We reference individuals by a unique integer ID.
+You can ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
+In your response use "PARENTS(id)" to find an indivuals mother and fater and "CHILDREN(id)" to list an individual's children and "SPOUSES(id)" to list spouses and INFO(id) for more details on the individual.
+We will do this over and over until you have the data you need.
+`
+const functionPrompt = `you have complete access to my family tree. We reference individuals by a unique integer ID.
+You can ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
+In your response use INFO(id) for more details on the individual.
+We will do this over and over until you have the data you need.
+`
 
-func llm(userPrompt string) string {
+//if you have enough information to answer, do not mention any functions.
+//Only call INFO() when needed so that we don't waste context space.
+
+const finalPrompt = `here is structured information from my family tree. We reference individuals by a unique integer ID.`
+
+
+func llm(userPrompt string, data string, final bool) string {
 	apikey := os.Getenv("HUGGING_FACE_HUB_TOKEN")
 	//url := "http://100.64.0.9:11434/v1/chat/completions"
 	url := "https://router.huggingface.co/v1/chat/completions"
 
-	// Construct the prompt
-	systemPrompt := `you have complete access to my family tree. We reference individuals by a unique integer ID.
-You can ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
-In your response use "PARENTS(id)" to list an individual's parents and "CHILDREN(id)" to list an individual's children and "SPOUSES(id)" to list spouses and INFO(id) for more details on the individual.  Only call INFO() when needed so that we don't waste context space.
 
-We will do this over and over until you have the data you need.
-if you have enough information to answer, do not mention any functions, just provide your answer.
-`
-	//When giving me these IDs, state "NEEDED", then provide as a list, each on its own line with no adornment.
+	temp := 0.3
+	systemPrompt := functionPrompt
+	if final {
+		systemPrompt = finalPrompt
+		temp = 0.7
+	}	
+	userPrompt += " here is the data: " + data
 
 	// Build the payload
 	payload := map[string]interface{}{
@@ -256,7 +272,7 @@ if you have enough information to answer, do not mention any functions, just pro
 		},
 		// This forces the model to output valid JSON
 		//"response_format": map[string]string{"type": "json_object"},
-		//"temperature":     0.3,
+		"temperature":     temp,
 	}
 
 	jsonData, _ := json.Marshal(payload)
@@ -298,35 +314,36 @@ func main() {
 
 	d := NewData("mrh-tree.ged")
 
-	ids := make([]int, 0, 100)
-	cids := make([]int, 0, 100)
-	pids := make([]int, 0, 100)
-	sids := make([]int, 0, 100)
+	ids := make(map[int]bool)
+	cids := make(map[int]bool)
+	pids := make(map[int]bool)
+	sids := make(map[int]bool)
 
-	//ids = append(ids, 0)
+	ids[0] = true
 	for {
 		
 		prompt := fmt.Sprintf("My ID is: %d.  %s\n", 0, question)
-	
-		for _, id := range(ids) {
+		data := ""
+		
+		for id := range(ids) {
 			j := d.Info(id)
-			prompt += j
+			data += j
 		}
-		for _, id := range(cids) {
+		for id := range(cids) {
 			j := d.ChildrenInfo(id)
-			prompt += j
+			data += j
 		}
-		for _, id := range(pids) {
+		for id := range(pids) {
 			j := d.ParentInfo(id)
-			prompt += j
+			data += j
 		}
-		for _, id := range(sids) {
+		for id := range(sids) {
 			j := d.SpouseInfo(id)
-			prompt += j
+			data += j
 		}
 
-		//fmt.Println(prompt)
-		resp := llm(prompt)
+		//fmt.Println(data)
+		resp := llm(prompt, data, false)
 		fmt.Println("------------------")
 		fmt.Println(resp)
 		fmt.Println("------------------")
@@ -334,6 +351,9 @@ func main() {
 		re := regexp.MustCompile(`([A-Z_][A-Z0-9_]*)\((\d+)\)`)
 		matches := re.FindAllStringSubmatch(resp, -1)
 		if len(matches) == 0 {
+			resp := llm(prompt, data, true)
+			fmt.Println("------------------")
+			fmt.Println(resp)
 			break
 		}
 		for _, m := range matches {
@@ -342,16 +362,16 @@ func main() {
 				f := m[1]
 				//fmt.Printf("call %s %d\n", f, id)
 				if f == "INFO" {
-					ids = append(ids, id)
+					ids[id] = true
 				}
 				if f == "PARENTS" {
-					pids = append(pids, id)
+					pids[id] = true
 				}
 				if f == "CHILDREN" {
-					cids = append(cids, id)
+					cids[id] = true
 				}
 				if f == "SPOUSES" {
-					sids = append(sids, id)
+					sids[id] = true
 				}
 			}
 		}
