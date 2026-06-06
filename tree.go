@@ -7,27 +7,18 @@ import (
 	"io/ioutil"
 	"fmt"
 	"strings"
+	"strconv"
 	"os"
 	"encoding/json"
 	"net/http"
 )
 
-type ChatResponse struct {
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	} `json:"choices"`
-	Error struct {
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
-}
 
 type Data struct {
-	g *gedcom.Gedcom
-	rootid string
-	individuals map[string]*gedcom.IndividualRecord
-	
+	g           *gedcom.Gedcom
+	//rootid      string
+	//individuals map[string]*gedcom.IndividualRecord
+	ixrefs      map[string]int
 }
 
 func NewData(filename string) (data *Data) {
@@ -37,24 +28,38 @@ func NewData(filename string) (data *Data) {
 	d := gedcom.NewDecoder(bytes.NewReader(raw))
 	data.g, _ = d.Decode()
 
-	data.individuals = make(map[string]*gedcom.IndividualRecord)
-	data.rootid = data.g.Individual[0].Xref
+	//data.individuals = make(map[string]*gedcom.IndividualRecord)
+	data.ixrefs = make(map[string]int)
+	//data.rootid = data.g.Individual[0].Xref
 
-	for _, rec := range data.g.Individual {
-		data.individuals[rec.Xref] = rec
+	for i, rec := range data.g.Individual {
+		//data.individuals[rec.Xref] = rec
+		data.ixrefs[rec.Xref] = i
 	}
-	fmt.Printf("Tree contains %d individuals\n", len(data.individuals))
-	return 
+	fmt.Printf("Tree contains %d individuals\n", len(data.ixrefs))
+	return
 }
-func (d *Data) Name(id string) (n string) {
-	i := d.individuals[id]
+
+func (d *Data) idx(xref string) (id int) {
+	id, ok := d.ixrefs[xref]
+	if !ok {
+		id = -1
+	}
+	return
+}
+func (d *Data) ind(id int) (*gedcom.IndividualRecord) {
+	return d.g.Individual[id]
+}
+
+func (d *Data) Name(id int) (n string) {
+	i := d.ind(id)
 	if i == nil { return }
 
 	n = i.Name[0].Name
 	return
 }
-func (d *Data) Sex(id string) (s string) {
-	i := d.individuals[id]
+func (d *Data) Sex(id int) (s string) {
+	i := d.ind(id)
 	if i == nil { return }
 
 	s = i.Sex
@@ -62,20 +67,20 @@ func (d *Data) Sex(id string) (s string) {
 }
 
 type InfoS struct {
-	ID          string `json:"id"`
+	ID          int    `json:"id"`
 	Name        string `json:"name"`
 	Sex         string `json:"sex"`
 	Birth       string `json:"birth"`
 	Birthplace  string `json:"birthplace"`
 	Death       string `json:"death"`
 	Deathplace  string `json:"deathplace"`
-	Father      string `json:"father"`
-	Mother      string `json:"mother"`
-	Children    []string `json:"children"`
-	Spouses     []string `json:"spouses"`
+	Father      int    `json:"father"`
+	Mother      int    `json:"mother"`
+	Children    []int  `json:"children"`
+	Spouses     []int  `json:"spouses"`
 	
 }
-func (d *Data) Info(id string) (j string) {
+func (d *Data) Info(id int) (j string) {
 
 	info := &InfoS{ID:id}
 	info.Name = d.Name(id)
@@ -91,8 +96,8 @@ func (d *Data) Info(id string) (j string) {
 	return
 }
 
-func (d *Data) Event(id, tag string) (date, place string) {
-	i := d.individuals[id]
+func (d *Data) Event(id int, tag string) (date, place string) {
+	i := d.ind(id)
 	if i == nil { return }
 
 	ev := i.Event
@@ -106,64 +111,81 @@ func (d *Data) Event(id, tag string) (date, place string) {
 	return
 }
 
-func (d *Data) Spouses(id string) (sids []string) {
-	sids = make([]string, 0, 10)
+func (d *Data) Spouses(id int) (sids []int) {
+	sids = make([]int, 0, 10)
 
-	i := d.individuals[id]
+	i := d.ind(id)
 	if i == nil { return }
 	fs := i.Family
 
 	for _, fl := range fs {
 		f := fl.Family
-		if f.Wife.Xref != id {
-			sids = append(sids, f.Wife.Xref)
+
+		wifeid := d.idx(f.Wife.Xref)
+		if wifeid != id {
+			sids = append(sids, wifeid)
 		}
-		if f.Husband.Xref != id {
-			sids = append(sids, f.Husband.Xref)
+		husbandid := d.idx(f.Husband.Xref)
+		if husbandid != id {
+			sids = append(sids, husbandid)
 		}
 	}
 	return
 }
 
-func (d *Data) Children(id string) (cids []string) {
-	cids = make([]string, 0, 10)
+func (d *Data) Children(id int) (cids []int) {
+	cids = make([]int, 0, 10)
 
-	i := d.individuals[id]
+	i := d.ind(id)
 	if i == nil { return }
 	fs := i.Family
 
 	for _, fl := range fs {
 		f := fl.Family
 		for _, c := range f.Child {
-			cids = append(cids, c.Xref)
+			cid := d.idx(c.Xref)
+			cids = append(cids, cid)
 		}
 	}
 	return
 }
 
-func (d *Data) Father(id string) (fid string) {
-	i := d.individuals[id]
+func (d *Data) Father(id int) (fid int) {
+	fid = -1
+	i := d.ind(id)
 	if i == nil { return }
 	pf := i.Parents
 	if len(pf) > 0 {
 		f := pf[0].Family
 		if f.Husband != nil {
-			fid = f.Husband.Xref
+			fid = d.idx(f.Husband.Xref)
 		}
 	}
 	return
 }
-func (d *Data) Mother(id string) (wid string) {
-	i := d.individuals[id]
+func (d *Data) Mother(id int) (mid int) {
+	mid = -1
+	i := d.ind(id)
 	if i == nil { return }
 	pf := i.Parents
 	if len(pf) > 0 {
 		f := pf[0].Family
 		if f.Wife != nil {
-			wid = f.Wife.Xref
+			mid = d.idx(f.Wife.Xref)
 		}
 	}
 	return
+}
+
+type ChatResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+	Error struct {
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
 }
 
 
@@ -173,7 +195,7 @@ func llm(userPrompt string) string {
 	url := "https://router.huggingface.co/v1/chat/completions"
 
 	// Construct the prompt
-	systemPrompt := `you have complete access to my family tree. We reference individuals by a unique string ID.
+	systemPrompt := `you have complete access to my family tree. We reference individuals by a unique integer ID.
 You can ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
 We will do this over and over until you have the data you need.
 When giving me these IDs, state "NEEDED", then provide as a list, each on its own line with no adornment.
@@ -230,13 +252,13 @@ func main() {
 
 	d := NewData("mrh-tree.ged")
 
-	ids := make([]string, 0, 100)
-	ids = append(ids, d.rootid)
+	ids := make([]int, 0, 100)
+	ids = append(ids, 0)
 	//ids = append(ids, "I252568536006")
 	//ids = append(ids, "I252568535918")
 	for {
 		
-		prompt := fmt.Sprintf("My ID is: %s.  %s\n", d.rootid, question)
+		prompt := fmt.Sprintf("My ID is: %d.  %s\n", 0, question)
 	
 		for _, id := range(ids) {
 			j := d.Info(id)
@@ -257,10 +279,10 @@ func main() {
 			r := resp[index + 6:]
 			needed := strings.Split(r, "\n")
 			for _, n := range needed {
-				if len(n) > 13 {n = n[0:13]}
-				if len(n) == 13 {
-					fmt.Printf("adding info for id: %s, %s\n", n, d.Name(n))
-					ids = append(ids, n)
+				id, err := strconv.Atoi(n)
+				if err == nil {
+					fmt.Printf("adding info for id: %d, %s\n", id, d.Name(id))
+					ids = append(ids, id)
 				}
 			}
 		}
