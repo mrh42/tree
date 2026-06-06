@@ -163,11 +163,11 @@ func (d *Data) Spouses(id int) (sids []int) {
 		f := fl.Family
 
 		wifeid := d.idx(f.Wife.Xref)
-		if wifeid != id {
+		if wifeid >= 0 && wifeid != id {
 			sids = append(sids, wifeid)
 		}
 		husbandid := d.idx(f.Husband.Xref)
-		if husbandid != id {
+		if husbandid >= 0 && husbandid != id {
 			sids = append(sids, husbandid)
 		}
 	}
@@ -237,14 +237,14 @@ We will do this over and over until you have the data you need.
 `
 const functionPrompt = `you have complete access to my family tree. We reference individuals by a unique integer ID.
 You can ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
-In your response use INFO(id) for more details on the individual.
+In your response use INFO(id) for each individual id you require details for.  Do not ever write INFO() unless needing new information.
 We will do this over and over until you have the data you need.
 `
 
 //if you have enough information to answer, do not mention any functions.
 //Only call INFO() when needed so that we don't waste context space.
 
-const finalPrompt = `here is structured information from my family tree. We reference individuals by a unique integer ID.`
+const finalPrompt = `Provide response in plain text, avoid markdown. Here is structured information from my family tree. We reference individuals by a unique integer ID.  When the user asks generically about a person, provide their name and dates of birth and death.`
 
 
 func llm(userPrompt string, data string, final bool) string {
@@ -252,6 +252,8 @@ func llm(userPrompt string, data string, final bool) string {
 	//url := "http://100.64.0.9:11434/v1/chat/completions"
 	url := "https://router.huggingface.co/v1/chat/completions"
 
+	//model := "google/gemma-4-26B-A4B-it"
+	model := "google/gemma-4-31B-it"
 
 	temp := 0.3
 	systemPrompt := functionPrompt
@@ -263,9 +265,7 @@ func llm(userPrompt string, data string, final bool) string {
 
 	// Build the payload
 	payload := map[string]interface{}{
-		"model": "google/gemma-4-31B-it",
-		//"model": "gemma4:31b",
-		//"model" : "google/gemma-4-26B-A4B-it",
+		"model": model, 
 		"messages": []map[string]string{
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userPrompt},
@@ -352,7 +352,7 @@ func main() {
 		matches := re.FindAllStringSubmatch(resp, -1)
 		if len(matches) == 0 {
 			resp := llm(prompt, data, true)
-			fmt.Println("------------------")
+			//fmt.Println("------------------")
 			fmt.Println(resp)
 			break
 		}
