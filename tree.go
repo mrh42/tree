@@ -374,18 +374,27 @@ func main() {
 		fmt.Println(resp)
 		fmt.Println("------------------")
 
+		// count current ids, see if we make progress later
 		num_ids := len(ids)
-		//re := regexp.MustCompile(`([A-Z_][A-Z0-9_]*)\((\d+)\)`)
-		re := regexp.MustCompile(`([A-Z_][A-Z0-9_]*)\((.+)\)`)
 
+		re := regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\(("(?:\\.|[^"\\])*")\)$`)
 		matches := re.FindAllStringSubmatch(resp, -1)
 		for _, m := range matches {
+			//fmt.Printf("m: %v\n", m)
 			if m[1] == "SEARCH" {
 				searched := d.Search(m[2])
 				for id := range searched {
 					ids[id] = true
 				}
 			}
+		}
+
+		re = regexp.MustCompile(`([A-Z_][A-Z0-9_]*)\((\d+)\)`)
+
+
+		matches = re.FindAllStringSubmatch(resp, -1)
+		for _, m := range matches {
+			//fmt.Printf("m: %v\n", m)
 			id, err := strconv.Atoi(m[2])
 			if err == nil {
 				f := m[1]
@@ -406,7 +415,7 @@ func main() {
 		}
 		if len(ids) == num_ids {
 			resp := llm(prompt, data, true)
-			fmt.Println("---- no progress made --------------")
+			fmt.Println("---- no further progress made --------------")
 			fmt.Println(resp)
 			break
 		}
