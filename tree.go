@@ -6,7 +6,8 @@ import (
 	"io"
 	"io/ioutil"
 	"fmt"
-	"strings"
+	//"strings"
+	"regexp"
 	"strconv"
 	"os"
 	"encoding/json"
@@ -95,6 +96,33 @@ func (d *Data) Info(id int) (j string) {
 	j = string(jd)
 	return
 }
+type InfoC struct {
+	ID          int    `json:"id"`
+	Children    []int  `json:"children"`
+}
+
+func (d *Data) ChildrenInfo(id int) (j string) {
+	info := &InfoC{ID:id}
+	info.Children = d.Children(id)
+	jd, _ := json.Marshal(info)
+	j = string(jd)
+	return
+}
+type InfoP struct {
+	ID          int    `json:"id"`
+	Father      int    `json:"father"`
+	Mother      int    `json:"mother"`
+}
+
+func (d *Data) ParentInfo(id int) (j string) {
+	info := &InfoS{ID:id}
+	info.Mother = d.Mother(id)
+	info.Father = d.Father(id)
+	jd, _ := json.Marshal(info)
+	j = string(jd)
+	return
+}
+
 
 func (d *Data) Event(id int, tag string) (date, place string) {
 	i := d.ind(id)
@@ -196,10 +224,11 @@ func llm(userPrompt string) string {
 
 	// Construct the prompt
 	systemPrompt := `you have complete access to my family tree. We reference individuals by a unique integer ID.
-You can ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
-We will do this over and over until you have the data you need.
-When giving me these IDs, state "NEEDED", then provide as a list, each on its own line with no adornment.
+        You can ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
+        In your response use "PARENTS(id)" to list an individual's parents and "CHILDREN(id)" to list an individual's children and INFO(id) for more details on the individual.  Only call INFO() when needed so that we don't waste context space."
+        We will do this over and over until you have the data you need.
 `
+	//When giving me these IDs, state "NEEDED", then provide as a list, each on its own line with no adornment.
 
 	// Build the payload
 	payload := map[string]interface{}{
@@ -253,15 +282,24 @@ func main() {
 	d := NewData("mrh-tree.ged")
 
 	ids := make([]int, 0, 100)
-	ids = append(ids, 0)
-	//ids = append(ids, "I252568536006")
-	//ids = append(ids, "I252568535918")
+	cids := make([]int, 0, 100)
+	pids := make([]int, 0, 100)
+
+	//ids = append(ids, 0)
 	for {
 		
 		prompt := fmt.Sprintf("My ID is: %d.  %s\n", 0, question)
 	
 		for _, id := range(ids) {
 			j := d.Info(id)
+			prompt += j
+		}
+		for _, id := range(cids) {
+			j := d.ChildrenInfo(id)
+			prompt += j
+		}
+		for _, id := range(pids) {
+			j := d.ParentInfo(id)
 			prompt += j
 		}
 
@@ -271,18 +309,24 @@ func main() {
 		fmt.Println(resp)
 		fmt.Println("------------------")
 
-		index := strings.Index(resp, "NEEDED")
-		
-		if index < 0 {
+		re := regexp.MustCompile(`([A-Z_][A-Z0-9_]*)\((\d+)\)`)
+		matches := re.FindAllStringSubmatch(resp, -1)
+		if len(matches) == 0 {
 			break
-		} else {
-			r := resp[index + 6:]
-			needed := strings.Split(r, "\n")
-			for _, n := range needed {
-				id, err := strconv.Atoi(n)
-				if err == nil {
-					fmt.Printf("adding info for id: %d, %s\n", id, d.Name(id))
+		}
+		for _, m := range matches {
+			id, err := strconv.Atoi(m[2])
+			if err == nil {
+				f := m[1]
+				//fmt.Printf("call %s %d\n", f, id)
+				if f == "INFO" {
 					ids = append(ids, id)
+				}
+				if f == "PARENTS" {
+					pids = append(pids, id)
+				}
+				if f == "CHILDREN" {
+					cids = append(cids, id)
 				}
 			}
 		}
