@@ -240,9 +240,9 @@ You can ask for info on individuals by telling me the IDs and I'll provide the i
 In your response use "PARENTS(id)" to find an indivuals mother and fater and "CHILDREN(id)" to list an individual's children and "SPOUSES(id)" to list spouses and INFO(id) for more details on the individual.
 We will do this over and over until you have the data you need.
 `
-const functionPrompt = `you have complete access to my family tree. We reference individuals by a unique integer ID.
-You can ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
-In your response use INFO(id) for each individual id you require details for.  Do not ever write INFO() unless needing new information.
+const functionPrompt = `you have complete access to my family tree. You reference individuals by a unique integer ID when needing information.
+You must ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
+In your response you must invoke INFO(id) for each individual id you require details for.  Do not ever write INFO() unless needing new information.
 We will do this over and over until you have the data you need. Avoid using markdown.
 `
 
@@ -257,8 +257,8 @@ func llm(userPrompt string, data string, final bool) string {
 	//url := "http://100.64.0.9:11434/v1/chat/completions"
 	url := "https://router.huggingface.co/v1/chat/completions"
 
-	model := "google/gemma-4-26B-A4B-it"
-	//model := "google/gemma-4-31B-it"
+	//model := "google/gemma-4-26B-A4B-it"
+	model := "google/gemma-4-31B-it"
 
 	temp := 0.3
 	systemPrompt := functionPrompt
