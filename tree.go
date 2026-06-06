@@ -12,14 +12,14 @@ import (
 	"os"
 	"encoding/json"
 	"net/http"
+	"github.com/lithammer/fuzzysearch/fuzzy"
 )
 
 
 type Data struct {
 	g           *gedcom.Gedcom
-	//rootid      string
-	//individuals map[string]*gedcom.IndividualRecord
 	ixrefs      map[string]int
+	names       []string
 }
 
 func NewData(filename string) (data *Data) {
@@ -31,11 +31,13 @@ func NewData(filename string) (data *Data) {
 
 	//data.individuals = make(map[string]*gedcom.IndividualRecord)
 	data.ixrefs = make(map[string]int)
+	data.names = make([]string, len(data.g.Individual))
 	//data.rootid = data.g.Individual[0].Xref
 
 	for i, rec := range data.g.Individual {
 		//data.individuals[rec.Xref] = rec
 		data.ixrefs[rec.Xref] = i
+		data.names[i] = rec.Name[0].Name
 	}
 	fmt.Printf("Tree contains %d individuals\n", len(data.ixrefs))
 	return
@@ -224,6 +226,22 @@ func (d *Data) Mother(id int) (mid int) {
 	return
 }
 
+func (d *Data) Search(name string) (ids map[int]bool) {
+
+	ids = make(map[int]bool)
+	name, _ = strconv.Unquote(name)
+
+	matches := fuzzy.RankFind(name, d.names)
+	for i, m := range matches {
+		ids[m.OriginalIndex] = true
+		//fmt.Printf("matches: %v\n", m)
+		if i > 20 {
+			break
+		}
+	}
+	return
+}
+
 type ChatResponse struct {
 	Choices []struct {
 		Message struct {
@@ -235,19 +253,22 @@ type ChatResponse struct {
 	} `json:"error,omitempty"`
 }
 
-const xfunctionPrompt = `you have complete access to my family tree. We reference individuals by a unique integer ID.
+const xxfunctionPrompt = `you have complete access to my family tree. We reference individuals by a unique integer ID.
 You can ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
 In your response use "PARENTS(id)" to find an indivuals mother and fater and "CHILDREN(id)" to list an individual's children and "SPOUSES(id)" to list spouses and INFO(id) for more details on the individual.
 We will do this over and over until you have the data you need.
 `
-const functionPrompt = `you have complete access to my family tree. You reference individuals by a unique integer ID when needing information.
+const xfunctionPrompt = `you have complete access to my family tree. You reference individuals by a unique integer ID when needing information.
 You must ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
 In your response you must invoke INFO(id) for each individual id you require details for.  Do not ever write INFO() unless needing new information.
-We will do this over and over until you have the data you need. Avoid using markdown.
-`
+We will do this over and over until you have the data you need. Avoid using markdown.`
 
-//if you have enough information to answer, do not mention any functions.
-//Only call INFO() when needed so that we don't waste context space.
+const functionPrompt = `you have complete access to my family tree. You reference individuals by a unique integer ID when needing information.
+You must ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
+In your response you must invoke INFO(id) for each individual id you require details for.
+You can lookup IDs for people by name with SEARCH("name"), only use when needed, remember to use quotes.
+We will do this over and over until you have the data you need. Avoid using markdown.`
+
 
 const finalPrompt = `Provide a detailed response in plain text, avoid markdown. Here is structured information from my family tree. We reference individuals by a unique integer ID.  When the user asks generically about a person, provide their name and dates of birth and death.`
 
@@ -354,9 +375,17 @@ func main() {
 		fmt.Println("------------------")
 
 		num_ids := len(ids)
-		re := regexp.MustCompile(`([A-Z_][A-Z0-9_]*)\((\d+)\)`)
+		//re := regexp.MustCompile(`([A-Z_][A-Z0-9_]*)\((\d+)\)`)
+		re := regexp.MustCompile(`([A-Z_][A-Z0-9_]*)\((.+)\)`)
+
 		matches := re.FindAllStringSubmatch(resp, -1)
 		for _, m := range matches {
+			if m[1] == "SEARCH" {
+				searched := d.Search(m[2])
+				for id := range searched {
+					ids[id] = true
+				}
+			}
 			id, err := strconv.Atoi(m[2])
 			if err == nil {
 				f := m[1]
