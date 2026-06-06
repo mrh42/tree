@@ -67,7 +67,7 @@ func (d *Data) Sex(id int) (s string) {
 	return
 }
 
-type InfoS struct {
+type InfoDetail struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
 	Sex         string `json:"sex"`
@@ -83,7 +83,7 @@ type InfoS struct {
 }
 func (d *Data) Info(id int) (j string) {
 
-	info := &InfoS{ID:id}
+	info := &InfoDetail{ID:id}
 	info.Name = d.Name(id)
 	info.Sex = d.Sex(id)
 	info.Birth, info.Birthplace = d.Event(id, "BIRT")
@@ -115,9 +115,21 @@ type InfoP struct {
 }
 
 func (d *Data) ParentInfo(id int) (j string) {
-	info := &InfoS{ID:id}
+	info := &InfoP{ID:id}
 	info.Mother = d.Mother(id)
 	info.Father = d.Father(id)
+	jd, _ := json.Marshal(info)
+	j = string(jd)
+	return
+}
+type InfoS struct {
+	ID          int    `json:"id"`
+	Spouses     []int  `json:"spouses"`
+}
+
+func (d *Data) SpouseInfo(id int) (j string) {
+	info := &InfoS{ID:id}
+	info.Spouses = d.Spouses(id)
 	jd, _ := json.Marshal(info)
 	j = string(jd)
 	return
@@ -172,6 +184,7 @@ func (d *Data) Children(id int) (cids []int) {
 		f := fl.Family
 		for _, c := range f.Child {
 			cid := d.idx(c.Xref)
+			//fmt.Printf("cid: %d x: %s\n", cid, c.Xref)
 			cids = append(cids, cid)
 		}
 	}
@@ -219,27 +232,31 @@ type ChatResponse struct {
 
 func llm(userPrompt string) string {
 	apikey := os.Getenv("HUGGING_FACE_HUB_TOKEN")
-	//url := "http://100.64.0.9:8000/v1/chat/completions" // Update port if your vLLM differs
+	//url := "http://100.64.0.9:11434/v1/chat/completions"
 	url := "https://router.huggingface.co/v1/chat/completions"
 
 	// Construct the prompt
 	systemPrompt := `you have complete access to my family tree. We reference individuals by a unique integer ID.
-        You can ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
-        In your response use "PARENTS(id)" to list an individual's parents and "CHILDREN(id)" to list an individual's children and INFO(id) for more details on the individual.  Only call INFO() when needed so that we don't waste context space."
-        We will do this over and over until you have the data you need.
+You can ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
+In your response use "PARENTS(id)" to list an individual's parents and "CHILDREN(id)" to list an individual's children and "SPOUSES(id)" to list spouses and INFO(id) for more details on the individual.  Only call INFO() when needed so that we don't waste context space.
+
+We will do this over and over until you have the data you need.
+if you have enough information to answer, do not mention any functions, just provide your answer.
 `
 	//When giving me these IDs, state "NEEDED", then provide as a list, each on its own line with no adornment.
 
 	// Build the payload
 	payload := map[string]interface{}{
 		"model": "google/gemma-4-31B-it",
+		//"model": "gemma4:31b",
+		//"model" : "google/gemma-4-26B-A4B-it",
 		"messages": []map[string]string{
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userPrompt},
 		},
 		// This forces the model to output valid JSON
 		//"response_format": map[string]string{"type": "json_object"},
-		"temperature":     0.3,
+		//"temperature":     0.3,
 	}
 
 	jsonData, _ := json.Marshal(payload)
@@ -284,6 +301,7 @@ func main() {
 	ids := make([]int, 0, 100)
 	cids := make([]int, 0, 100)
 	pids := make([]int, 0, 100)
+	sids := make([]int, 0, 100)
 
 	//ids = append(ids, 0)
 	for {
@@ -300,6 +318,10 @@ func main() {
 		}
 		for _, id := range(pids) {
 			j := d.ParentInfo(id)
+			prompt += j
+		}
+		for _, id := range(sids) {
+			j := d.SpouseInfo(id)
 			prompt += j
 		}
 
@@ -327,6 +349,9 @@ func main() {
 				}
 				if f == "CHILDREN" {
 					cids = append(cids, id)
+				}
+				if f == "SPOUSES" {
+					sids = append(sids, id)
 				}
 			}
 		}
