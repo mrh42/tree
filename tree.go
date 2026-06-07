@@ -337,12 +337,13 @@ func llm(userPrompt string, data string, final bool) string {
 
 	//model := "google/gemma-4-26B-A4B-it"
 	model := "google/gemma-4-31B-it"
+	//model := "openai/gpt-oss-120b"
 
 	temp := 0.0
 	systemPrompt := functionPrompt
 	if final {
 		systemPrompt = finalPrompt
-		temp = 0.0
+		temp = 0.4
 	}	
 	userPrompt += " here is the data: " + data
 
@@ -437,7 +438,7 @@ func main() {
 		fmt.Println("------------------")
 
 		// count current ids, see if we make progress later
-		num_ids := len(ids)
+		num_ids := len(ids) + len(gids)
 
 		re := regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\(("(?:\\.|[^"\\])*")\)$`)
 		matches := re.FindAllStringSubmatch(resp, -1)
@@ -478,7 +479,8 @@ func main() {
 				}*/
 			}
 		}
-		if len(ids) == num_ids {
+		num_ids2 := len(ids) + len(gids)
+		if num_ids2 == num_ids {
 			resp := llm(prompt, data, true)
 			fmt.Println("---- no further progress made --------------")
 			fmt.Println(resp)
