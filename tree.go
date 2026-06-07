@@ -6,7 +6,7 @@ import (
 	"io"
 	"io/ioutil"
 	"fmt"
-	//"strings"
+	"strings"
 	"regexp"
 	"strconv"
 	"os"
@@ -20,27 +20,51 @@ type Data struct {
 	g           *gedcom.Gedcom
 	ixrefs      map[string]int
 	names       []string
+	births      []string
+	deaths      []string
+	raw         []byte
 }
 
 func NewData(filename string) (data *Data) {
 	data = &Data{}
 
-	raw, _ := ioutil.ReadFile(filename)
-	d := gedcom.NewDecoder(bytes.NewReader(raw))
+	data.raw, _ = ioutil.ReadFile(filename)
+	d := gedcom.NewDecoder(bytes.NewReader(data.raw))
 	data.g, _ = d.Decode()
 
-	//data.individuals = make(map[string]*gedcom.IndividualRecord)
 	data.ixrefs = make(map[string]int)
+	// allows searching names
 	data.names = make([]string, len(data.g.Individual))
-	//data.rootid = data.g.Individual[0].Xref
 
 	for i, rec := range data.g.Individual {
-		//data.individuals[rec.Xref] = rec
 		data.ixrefs[rec.Xref] = i
+		//fmt.Printf("%d: %s\n", i, rec.Xref)
 		data.names[i] = rec.Name[0].Name
+	}
+
+	// allow searching birth and death places
+	data.births = make([]string, len(data.names))
+	data.deaths = make([]string, len(data.names))
+	for i := range data.names {
+		_, data.births[i] = data.Event(i, "BIRT")
+		_, data.deaths[i] = data.Event(i, "DEAT")
 	}
 	fmt.Printf("Tree contains %d individuals\n", len(data.ixrefs))
 	return
+}
+
+// extreme hack for now...
+func (d *Data) RawData(xref1 string) (r string) {
+	startm := fmt.Sprintf("0 @%s@ INDI", xref1)
+
+	raws := string(d.raw)
+	i := strings.Index(raws, startm)
+
+	raws = raws[i:]
+	i = strings.Index(raws, "\n0 @")
+	r = raws[:i]
+
+	return 
 }
 
 func (d *Data) idx(xref string) (id int) {
@@ -96,7 +120,7 @@ func (d *Data) Info(id int) (j string) {
 	info.Mother = d.Mother(id)
 	info.Father = d.Father(id)
 	jd, _ := json.Marshal(info)
-	j = string(jd)
+	j = string(jd) + "\n"
 	return
 }
 type InfoC struct {
@@ -108,7 +132,7 @@ func (d *Data) ChildrenInfo(id int) (j string) {
 	info := &InfoC{ID:id}
 	info.Children = d.Children(id)
 	jd, _ := json.Marshal(info)
-	j = string(jd)
+	j = string(jd) + "\n"
 	return
 }
 type InfoP struct {
@@ -122,7 +146,7 @@ func (d *Data) ParentInfo(id int) (j string) {
 	info.Mother = d.Mother(id)
 	info.Father = d.Father(id)
 	jd, _ := json.Marshal(info)
-	j = string(jd)
+	j = string(jd) + "\n"
 	return
 }
 type InfoS struct {
@@ -134,7 +158,24 @@ func (d *Data) SpouseInfo(id int) (j string) {
 	info := &InfoS{ID:id}
 	info.Spouses = d.Spouses(id)
 	jd, _ := json.Marshal(info)
-	j = string(jd)
+	j = string(jd) + "\n"
+	return
+}
+
+type InfoG struct {
+	ID          int    `json:"id"`
+	GED         string  `json:"ged"`
+}
+
+func (d *Data) GEDCOMInfo(id int) (j string) {
+	ged := &InfoG{ID:id}
+
+	i := d.ind(id)
+	if i != nil {
+		ged.GED = d.RawData(i.Xref)
+	}
+	jd, _ := json.Marshal(ged)
+	j = string(jd) + "\n"
 	return
 }
 
@@ -199,46 +240,67 @@ func (d *Data) Children(id int) (cids []int) {
 	return
 }
 
+// only returns one father, but good enough for demo
 func (d *Data) Father(id int) (fid int) {
 	fid = -1
 	i := d.ind(id)
 	if i == nil { return }
 	pf := i.Parents
-	if len(pf) > 0 {
-		f := pf[0].Family
+	for _, p := range pf {
+		f := p.Family
 		if f.Husband != nil {
 			fid = d.idx(f.Husband.Xref)
+			if fid >= 0 {
+				break
+			}
 		}
 	}
 	return
 }
+
+// only returns one mother, but good enough for demo
 func (d *Data) Mother(id int) (mid int) {
 	mid = -1
 	i := d.ind(id)
 	if i == nil { return }
 	pf := i.Parents
-	if len(pf) > 0 {
-		f := pf[0].Family
+	for _, p := range pf {
+		f := p.Family
 		if f.Wife != nil {
 			mid = d.idx(f.Wife.Xref)
+			if mid >= 0 {
+				break
+			}
 		}
 	}
 	return
 }
 
-func (d *Data) Search(name string) (ids map[int]bool) {
+// quick hack to let the llm search
+func (d *Data) Search(field, name string) (ids map[int]bool) {
 
 	ids = make(map[int]bool)
 	name, _ = strconv.Unquote(name)
 
-	matches := fuzzy.RankFind(name, d.names)
+	var target []string
+	switch field {
+	case "BIRTH":
+		target = d.births
+	case "DEATH":
+		target = d.deaths
+	default:
+		target = d.names
+	}
+	matches := fuzzy.RankFind(name, target)
 	for i, m := range matches {
 		ids[m.OriginalIndex] = true
-		//fmt.Printf("matches: %v\n", m)
-		if i > 20 {
+
+		// limit how many people we will add
+		if i > 200 {
 			break
 		}
 	}
+	fmt.Printf("Search(%s) added %d id entries\n", name, len(ids))
 	return
 }
 
@@ -253,21 +315,15 @@ type ChatResponse struct {
 	} `json:"error,omitempty"`
 }
 
-const xxfunctionPrompt = `you have complete access to my family tree. We reference individuals by a unique integer ID.
-You can ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
-In your response use "PARENTS(id)" to find an indivuals mother and fater and "CHILDREN(id)" to list an individual's children and "SPOUSES(id)" to list spouses and INFO(id) for more details on the individual.
-We will do this over and over until you have the data you need.
-`
-const xfunctionPrompt = `you have complete access to my family tree. You reference individuals by a unique integer ID when needing information.
-You must ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
-In your response you must invoke INFO(id) for each individual id you require details for.  Do not ever write INFO() unless needing new information.
-We will do this over and over until you have the data you need. Avoid using markdown.`
 
 const functionPrompt = `you have complete access to my family tree. You reference individuals by a unique integer ID when needing information.
 You must ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
 In your response you must invoke INFO(id) for each individual id you require details for.
+You can request raw GEDCOM data for an indvidual be invoking GEDCOM(id), only use when requested, it takes a lot of space.
 You can lookup IDs for people by name with SEARCH("name"), only use when needed, remember to use quotes.
-We will do this over and over until you have the data you need. Avoid using markdown.`
+You can lookup IDs for people by birth location with BIRTH("place"), only use when needed, remember to use quotes.
+You can lookup IDs for people by death location with DEATH("place"), only use when needed, remember to use quotes.
+We will do this over and over until you have the data you need. Avoid using markdown. Valid ids are 0 - 9617.`
 
 
 const finalPrompt = `Provide a detailed response in plain text, avoid markdown. Here is structured information from my family tree. We reference individuals by a unique integer ID.  When the user asks generically about a person, provide their name and dates of birth and death.`
@@ -276,16 +332,17 @@ const finalPrompt = `Provide a detailed response in plain text, avoid markdown. 
 func llm(userPrompt string, data string, final bool) string {
 	apikey := os.Getenv("HUGGING_FACE_HUB_TOKEN")
 	//url := "http://100.64.0.9:11434/v1/chat/completions"
+	//url := "http://100.64.0.128:8000/v1/chat/completions"
 	url := "https://router.huggingface.co/v1/chat/completions"
 
 	//model := "google/gemma-4-26B-A4B-it"
 	model := "google/gemma-4-31B-it"
 
-	temp := 0.3
+	temp := 0.0
 	systemPrompt := functionPrompt
 	if final {
 		systemPrompt = finalPrompt
-		temp = 0.7
+		temp = 0.0
 	}	
 	userPrompt += " here is the data: " + data
 
@@ -341,11 +398,12 @@ func main() {
 	d := NewData("mrh-tree.ged")
 
 	ids := make(map[int]bool)
-	cids := make(map[int]bool)
+	gids := make(map[int]bool)
+	/*cids := make(map[int]bool)
 	pids := make(map[int]bool)
-	sids := make(map[int]bool)
+	sids := make(map[int]bool)*/
 
-	ids[0] = true
+	//ids[0] = true
 	for {
 		
 		prompt := fmt.Sprintf("My ID is: %d.  %s\n", 0, question)
@@ -355,7 +413,11 @@ func main() {
 			j := d.Info(id)
 			data += j
 		}
-		for id := range(cids) {
+		for id := range(gids) {
+			j := d.GEDCOMInfo(id)
+			data += j
+		}
+		/*for id := range(cids) {
 			j := d.ChildrenInfo(id)
 			data += j
 		}
@@ -366,7 +428,7 @@ func main() {
 		for id := range(sids) {
 			j := d.SpouseInfo(id)
 			data += j
-		}
+		}*/
 
 		//fmt.Println(data)
 		resp := llm(prompt, data, false)
@@ -381,8 +443,8 @@ func main() {
 		matches := re.FindAllStringSubmatch(resp, -1)
 		for _, m := range matches {
 			//fmt.Printf("m: %v\n", m)
-			if m[1] == "SEARCH" {
-				searched := d.Search(m[2])
+			if m[1] == "SEARCH" || m[1] == "BIRTH" || m[1] == "DEATH" {
+				searched := d.Search(m[1], m[2])
 				for id := range searched {
 					ids[id] = true
 				}
@@ -402,7 +464,10 @@ func main() {
 				if f == "INFO" {
 					ids[id] = true
 				}
-				if f == "PARENTS" {
+				if f == "GEDCOM" {
+					gids[id] = true
+				}
+				/*if f == "PARENTS" {
 					pids[id] = true
 				}
 				if f == "CHILDREN" {
@@ -410,7 +475,7 @@ func main() {
 				}
 				if f == "SPOUSES" {
 					sids[id] = true
-				}
+				}*/
 			}
 		}
 		if len(ids) == num_ids {
