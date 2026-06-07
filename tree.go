@@ -304,6 +304,23 @@ func (d *Data) Search(field, name string) (ids map[int]bool) {
 	return
 }
 
+type LLM struct {
+	model     string
+	url       string
+
+	systemPrompt string
+	temp      float32
+}
+
+func NewLLM(model, url string) (llm *LLM) {
+	llm = &LLM{}
+
+	llm.model = model
+	llm.url = url
+	return
+	
+}
+
 type ChatResponse struct {
 	Choices []struct {
 		Message struct {
@@ -316,51 +333,27 @@ type ChatResponse struct {
 }
 
 
-const functionPrompt = `you have complete access to my family tree. You reference individuals by a unique integer ID when needing information.
-You must ask for info on individuals by telling me the IDs and I'll provide the info in the next prompt.
-In your response you must invoke INFO(id) for each individual id you require details for.
-You can request raw GEDCOM data for an indvidual be invoking GEDCOM(id), only use when requested, it takes a lot of space.
-You can lookup IDs for people by name with SEARCH("name"), only use when needed, remember to use quotes.
-You can lookup IDs for people by birth location with BIRTH("place"), only use when needed, remember to use quotes.
-You can lookup IDs for people by death location with DEATH("place"), only use when needed, remember to use quotes.
-We will do this over and over until you have the data you need. Avoid using markdown. Valid ids are 0 - 9617.`
 
 
-const finalPrompt = `Provide a detailed response in plain text, avoid markdown. Here is structured information from my family tree. We reference individuals by a unique integer ID.  When the user asks generically about a person, provide their name and dates of birth and death.`
-
-
-func llm(userPrompt string, data string, final bool) string {
+func (llm *LLM) Chat(userPrompt string, data string) string {
 	apikey := os.Getenv("HUGGING_FACE_HUB_TOKEN")
-	//url := "http://100.64.0.9:11434/v1/chat/completions"
-	//url := "http://100.64.0.128:8000/v1/chat/completions"
-	url := "https://router.huggingface.co/v1/chat/completions"
 
-	//model := "google/gemma-4-26B-A4B-it"
-	model := "google/gemma-4-31B-it"
-	//model := "openai/gpt-oss-120b"
-
-	temp := 0.0
-	systemPrompt := functionPrompt
-	if final {
-		systemPrompt = finalPrompt
-		temp = 0.4
-	}	
 	userPrompt += " here is the data: " + data
 
 	// Build the payload
 	payload := map[string]interface{}{
-		"model": model, 
+		"model": llm.model, 
 		"messages": []map[string]string{
-			{"role": "system", "content": systemPrompt},
+			{"role": "system", "content": llm.systemPrompt},
 			{"role": "user", "content": userPrompt},
 		},
 		// This forces the model to output valid JSON
 		//"response_format": map[string]string{"type": "json_object"},
-		"temperature":     temp,
+		"temperature":     llm.temp,
 	}
 
 	jsonData, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	req, _ := http.NewRequest("POST", llm.url, bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apikey))
 
@@ -392,17 +385,45 @@ func llm(userPrompt string, data string, final bool) string {
 	return chatResp.Choices[0].Message.Content
 }
 
+
+const functionPrompt = `
+you have complete access to my family tree. You reference individuals by a unique integer ID when needing information.
+You must ask for information on individuals by telling me the IDs and I'll provide the info in the next prompt.
+In your response you must invoke INFO(id) for each individual id you require details for.
+You can request raw GEDCOM data for an indvidual be invoking GEDCOM(id), only use when requested, it takes a lot of space.
+You can lookup IDs for people by name with SEARCH("name"), only use when needed, remember to use quotes.
+You can lookup IDs for people by birth location with BIRTH("place"), only use when needed, remember to use quotes.
+You can lookup IDs for people by death location with DEATH("place"), only use when needed, remember to use quotes.
+We will do this over and over until you have the data you need. Avoid using markdown.`
+
+
+const finalPrompt = `Provide a detailed response. Avoid markdown.  Nicely format for a text terminal window.
+Here is structured information from my family tree.
+We reference individuals by a unique integer ID.
+When the user asks generically about a person, provide their name and dates and places of birth and death.`
+
+const xfinalPrompt = `Provide a detailed response in plain text, avoid markdown. Here is structured information from my family tree. We reference individuals by a unique integer ID.  When the user asks generically about a person, provide their name and dates and places of birth and death.`
+
 func main() {
 
 	question := os.Args[1]
 
 	d := NewData("mrh-tree.ged")
 
+	//url := "http://100.64.0.9:11434/v1/chat/completions"
+	//url := "http://100.64.0.128:8000/v1/chat/completions"
+	url := "https://router.huggingface.co/v1/chat/completions"
+	model := "google/gemma-4-31B-it"
+	//model := "google/gemma-4-26B-A4B-it"
+	//model := "openai/gpt-oss-120b"
+
+	llm := NewLLM(model, url)
+
+	llm.systemPrompt = functionPrompt
+	llm.temp = 0.0
+
 	ids := make(map[int]bool)
 	gids := make(map[int]bool)
-	/*cids := make(map[int]bool)
-	pids := make(map[int]bool)
-	sids := make(map[int]bool)*/
 
 	//ids[0] = true
 	for {
@@ -418,21 +439,9 @@ func main() {
 			j := d.GEDCOMInfo(id)
 			data += j
 		}
-		/*for id := range(cids) {
-			j := d.ChildrenInfo(id)
-			data += j
-		}
-		for id := range(pids) {
-			j := d.ParentInfo(id)
-			data += j
-		}
-		for id := range(sids) {
-			j := d.SpouseInfo(id)
-			data += j
-		}*/
 
 		//fmt.Println(data)
-		resp := llm(prompt, data, false)
+		resp := llm.Chat(prompt, data)
 		fmt.Println("------------------")
 		fmt.Println(resp)
 		fmt.Println("------------------")
@@ -440,6 +449,7 @@ func main() {
 		// count current ids, see if we make progress later
 		num_ids := len(ids) + len(gids)
 
+		// look for function calls with string arguments
 		re := regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\(("(?:\\.|[^"\\])*")\)$`)
 		matches := re.FindAllStringSubmatch(resp, -1)
 		for _, m := range matches {
@@ -452,9 +462,8 @@ func main() {
 			}
 		}
 
+		// look for function calls with integer/id arguments
 		re = regexp.MustCompile(`([A-Z_][A-Z0-9_]*)\((\d+)\)`)
-
-
 		matches = re.FindAllStringSubmatch(resp, -1)
 		for _, m := range matches {
 			//fmt.Printf("m: %v\n", m)
@@ -468,21 +477,17 @@ func main() {
 				if f == "GEDCOM" {
 					gids[id] = true
 				}
-				/*if f == "PARENTS" {
-					pids[id] = true
-				}
-				if f == "CHILDREN" {
-					cids[id] = true
-				}
-				if f == "SPOUSES" {
-					sids[id] = true
-				}*/
 			}
 		}
 		num_ids2 := len(ids) + len(gids)
+
+		// we have completed giving the LLM data
 		if num_ids2 == num_ids {
-			resp := llm(prompt, data, true)
-			fmt.Println("---- no further progress made --------------")
+			llm.systemPrompt = finalPrompt
+			llm.temp = 0.4
+			
+			fmt.Println("---- no further progress made, getting final answer --------------")
+			resp := llm.Chat(prompt, data)
 			fmt.Println(resp)
 			break
 		}
