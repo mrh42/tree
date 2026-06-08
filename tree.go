@@ -381,7 +381,9 @@ You can request raw GEDCOM data for an indvidual be invoking GEDCOM(id), only us
 You can lookup IDs for people by name with SEARCH("name"), only use when needed, remember to use quotes.
 You can lookup IDs for people by birth location with BIRTH("place"), only use when needed, remember to use quotes.
 You can lookup IDs for people by death location with DEATH("place"), only use when needed, remember to use quotes.
-We will do this over and over until you have the data you need. Avoid using markdown.`
+We will do this over and over until you have the data you need.
+If you would like to add your own text to the prompt of the next round say REMEMBER("text") on a line by itself. I will return this text to your next invocation, you can use this to prompt yourself.
+Avoid using markdown.`
 
 
 const finalPrompt = `Provide a detailed response. Avoid markdown.  Nicely format for a text terminal window.
@@ -390,17 +392,16 @@ When no marriage date exists, you must only use the term partner.
 When the user asks generically about a person, provide their name and dates and places of birth and death.
 Here is structured information from my family tree, individuals are linked by ID.
 `
-//We reference individuals by a unique integer ID.
-
-const xfinalPrompt = `Provide a detailed response in plain text, avoid markdown.
-When the user asks generically about a person, provide their name and dates and places of birth and death.
-Here is structured information from my family tree.
-We reference individuals by a unique integer ID.
-`
 
 func main() {
 	var showData bool
+	var onlyFinal bool
+
+	model := "google/gemma-4-31B-it"
+	flag.StringVar(&model, "model", model, "LLM model to use")
+
 	flag.BoolVar(&showData, "data", false, "show raw data sent to the LLM")
+	flag.BoolVar(&onlyFinal, "final", false, "show only final results")
 	flag.Parse()
 
 	question := flag.Args()[0]
@@ -410,7 +411,6 @@ func main() {
 	//url := "http://100.64.0.9:11434/v1/chat/completions"
 	//url := "http://100.64.0.128:8000/v1/chat/completions"
 	url := "https://router.huggingface.co/v1/chat/completions"
-	model := "google/gemma-4-31B-it"
 	//model := "google/gemma-4-26B-A4B-it"
 	//model := "openai/gpt-oss-120b"
 
@@ -423,10 +423,18 @@ func main() {
 	gids := make(map[int]bool)
 
 	//ids[0] = true
+	remembered := ""
 	for {
 		
 		prompt := fmt.Sprintf("My ID is: %d.  %s\n", 0, question)
 		data := ""
+
+		if remembered != "" {
+			r := make(map[string]string)
+			r["REMEMBER"] = remembered
+			j, _ := json.Marshal(r)
+			data += string(j) + "\n"
+		}
 		
 		for id := range(ids) {
 			j := d.Info(id)
@@ -441,10 +449,16 @@ func main() {
 			fmt.Println(data)
 		}
 		resp := llm.Chat(prompt, data)
-		fmt.Printf("------------------ %s worked on %d bytes of data for %s ------------\n", llm.model, len(data), llm.elapsed)
-		fmt.Println(resp)
-		fmt.Println("------------------")
 
+
+		fmt.Printf("------------------ %s worked on %d bytes of data for %s ------------\n", llm.model, len(data), llm.elapsed)
+		if !onlyFinal {
+			fmt.Println(resp)
+			fmt.Println("------------------")
+		}
+
+		// forget what we last remembered
+		remembered = ""
 		// count current ids, see if we make progress later
 		num_ids := len(ids) + len(gids)
 
@@ -461,7 +475,13 @@ func main() {
 					ids[id] = true
 				}
 			}
+			if m[1] == "REMEMBER" {
+				remembered = m[2]
+				remembered, _ = strconv.Unquote(remembered)
+				//fmt.Printf("rem: %s\n", m[
+			}
 		}
+
 
 		// look for function calls with integer/id arguments
 		re = regexp.MustCompile(`([A-Z_][A-Z0-9_]*)\((\d+)\)`)
@@ -492,6 +512,8 @@ func main() {
 			fmt.Printf("------------------ %s worked on %d bytes of data for %s ------------\n", llm.model, len(data), llm.elapsed)
 			fmt.Println(resp)
 			break
+		} else {
+			fmt.Printf("----- Number of added records for next LLM round: %d\n", num_ids2 - num_ids)
 		}
 	}
 }
