@@ -95,6 +95,11 @@ func (d *Data) Sex(id int) (s string) {
 	return
 }
 
+type Spouse struct {
+	ID          int    `json:"id"`
+	Married     string `json:"married"`
+	Divorced    string `json:"divorced"`
+}
 type InfoDetail struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
@@ -106,7 +111,7 @@ type InfoDetail struct {
 	Father      int    `json:"father"`
 	Mother      int    `json:"mother"`
 	Children    []int  `json:"children"`
-	Spouses     []int  `json:"spouses"`
+	Spouses     []Spouse  `json:"spouses"`
 	
 }
 func (d *Data) Info(id int) (j string) {
@@ -124,44 +129,7 @@ func (d *Data) Info(id int) (j string) {
 	j = string(jd) + "\n"
 	return
 }
-type InfoC struct {
-	ID          int    `json:"id"`
-	Children    []int  `json:"children"`
-}
 
-func (d *Data) ChildrenInfo(id int) (j string) {
-	info := &InfoC{ID:id}
-	info.Children = d.Children(id)
-	jd, _ := json.Marshal(info)
-	j = string(jd) + "\n"
-	return
-}
-type InfoP struct {
-	ID          int    `json:"id"`
-	Father      int    `json:"father"`
-	Mother      int    `json:"mother"`
-}
-
-func (d *Data) ParentInfo(id int) (j string) {
-	info := &InfoP{ID:id}
-	info.Mother = d.Mother(id)
-	info.Father = d.Father(id)
-	jd, _ := json.Marshal(info)
-	j = string(jd) + "\n"
-	return
-}
-type InfoS struct {
-	ID          int    `json:"id"`
-	Spouses     []int  `json:"spouses"`
-}
-
-func (d *Data) SpouseInfo(id int) (j string) {
-	info := &InfoS{ID:id}
-	info.Spouses = d.Spouses(id)
-	jd, _ := json.Marshal(info)
-	j = string(jd) + "\n"
-	return
-}
 
 type InfoG struct {
 	ID          int    `json:"id"`
@@ -187,6 +155,7 @@ func (d *Data) Event(id int, tag string) (date, place string) {
 
 	ev := i.Event
 	for _, e := range ev {
+		//fmt.Printf("event: id: %d tag: %s type: %s date: %s place: %s\n", id, e.Tag, e.Type, e.Date, e.Place.Name)
 		if e.Tag == tag {
 			date = e.Date
 			place = e.Place.Name
@@ -196,8 +165,8 @@ func (d *Data) Event(id int, tag string) (date, place string) {
 	return
 }
 
-func (d *Data) Spouses(id int) (sids []int) {
-	sids = make([]int, 0, 10)
+func (d *Data) Spouses(id int) (spouses []Spouse) {
+	spouses = make([]Spouse, 0, 10)
 
 	i := d.ind(id)
 	if i == nil { return }
@@ -207,16 +176,29 @@ func (d *Data) Spouses(id int) (sids []int) {
 		f := fl.Family
 		if f == nil {continue}
 
+		var spouse Spouse
+		for _, fe := range f.Event {
+			//fmt.Printf("id: %d, tag: %s date: %s place: %s\n", id, fe.Tag, fe.Date, fe.Place)
+			if fe.Tag == "MARR" {
+				spouse.Married = fmt.Sprintf("%s %s", fe.Date, fe.Place.Name)
+			}
+			if fe.Tag == "DIV" {
+				spouse.Divorced = fmt.Sprintf("%s %s", fe.Date, fe.Place.Name)
+			}
+		}
+
 		if f.Wife != nil {
 			wifeid := d.idx(f.Wife.Xref)
 			if wifeid >= 0 && wifeid != id {
-				sids = append(sids, wifeid)
+				spouse.ID = wifeid
+				spouses = append(spouses, spouse)
 			}
 		}
 		if f.Husband != nil {
 			husbandid := d.idx(f.Husband.Xref)
 			if husbandid >= 0 && husbandid != id {
-				sids = append(sids, husbandid)
+				spouse.ID = husbandid
+				spouses = append(spouses, spouse)
 			}
 		}
 	}
@@ -403,11 +385,18 @@ We will do this over and over until you have the data you need. Avoid using mark
 
 
 const finalPrompt = `Provide a detailed response. Avoid markdown.  Nicely format for a text terminal window.
+If you have marriage or divorce dates for couples, you may refer to them as spouses, husband, wife.
+When no marriage date exists, you must only use the term partner.
+When the user asks generically about a person, provide their name and dates and places of birth and death.
+Here is structured information from my family tree, individuals are linked by ID.
+`
+//We reference individuals by a unique integer ID.
+
+const xfinalPrompt = `Provide a detailed response in plain text, avoid markdown.
+When the user asks generically about a person, provide their name and dates and places of birth and death.
 Here is structured information from my family tree.
 We reference individuals by a unique integer ID.
-When the user asks generically about a person, provide their name and dates and places of birth and death.`
-
-const xfinalPrompt = `Provide a detailed response in plain text, avoid markdown. Here is structured information from my family tree. We reference individuals by a unique integer ID.  When the user asks generically about a person, provide their name and dates and places of birth and death.`
+`
 
 func main() {
 
@@ -489,7 +478,7 @@ func main() {
 		// we have completed giving the LLM data
 		if num_ids2 == num_ids {
 			llm.systemPrompt = finalPrompt
-			llm.temp = 0.4
+			llm.temp = 0.1
 			
 			fmt.Println("---- no further progress made, getting final answer --------------")
 			resp := llm.Chat(prompt, data)
