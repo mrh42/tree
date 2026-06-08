@@ -264,7 +264,7 @@ func (d *Data) Mother(id int) (mid int) {
 func (d *Data) Search(field, name string) (ids map[int]bool) {
 
 	ids = make(map[int]bool)
-	name, _ = strconv.Unquote(name)
+	//name, _ = strconv.Unquote(name)
 
 	var target []string
 	switch field {
@@ -376,6 +376,20 @@ func (llm *LLM) Chat(userPrompt string, data string) string {
 const functionPrompt = `
 you have complete access to my family tree. You reference individuals by a unique integer ID when needing information.
 You must ask for information on individuals by telling me the IDs and I'll provide the info in the next prompt.
+In your response you must invoke "INFO: id" for each individual id you require details for. 
+You can request raw GEDCOM data for an indvidual be invoking "GEDCOM: id", only use when requested, it takes a lot of space.
+You can lookup IDs for people by name with "SEARCH: name", only use when needed.
+You can lookup IDs for people by birth location with "BIRTH: place", only use when needed.
+You can lookup IDs for people by death location with "DEATH: place", only use when needed.
+We will do this over and over until you have the data you need.
+If you would like to add your own text to the prompt of the next round, say "HINT: text" on a line by itself.
+If you would like to add a fact to your knowledge for all future rounds, say "REMEMBER: text" on a line by itself.
+The when using INFO, SEARCH, BIRTH, DEATH each must be on a new line with no other text.
+Avoid using markdown.`
+
+const xfunctionPrompt = `
+you have complete access to my family tree. You reference individuals by a unique integer ID when needing information.
+You must ask for information on individuals by telling me the IDs and I'll provide the info in the next prompt.
 In your response you must invoke INFO(id) for each individual id you require details for.
 You can request raw GEDCOM data for an indvidual be invoking GEDCOM(id), only use when requested, it takes a lot of space.
 You can lookup IDs for people by name with SEARCH("name"), only use when needed, remember to use quotes.
@@ -471,47 +485,38 @@ func main() {
 		num_ids := len(ids) + len(gids)
 
 		// look for function calls with string arguments
-		//re := regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\(("(?:\\.|[^"\\])*")\)$`)
-		re := regexp.MustCompile(`([A-Z]*)\(("(?:\\.|[^"\\])*")\)`)
+		re := regexp.MustCompile(`(?m)^([A-Z]+): (.+)$`)
 
 		matches := re.FindAllStringSubmatch(resp, -1)
 		for _, m := range matches {
-			//fmt.Printf("m: %v\n", m)
-			if m[1] == "SEARCH" || m[1] == "BIRTH" || m[1] == "DEATH" {
-				searched := d.Search(m[1], m[2])
+			//fmt.Printf("m1: '%s' m2: '%s'\n", m[1], m[2])
+			v := m[1]
+			arg := m[2]
+			if v == "SEARCH" || v == "BIRTH" || v == "DEATH" {
+				searched := d.Search(v, arg)
 				for id := range searched {
 					ids[id] = true
 				}
 			}
-			if m[1] == "HINT" {
-				hint = m[2]
-				hint, _ = strconv.Unquote(hint)
+			if v == "HINT" {
+				hint = arg
 			}
-			if m[1] == "REMEMBER" {
-				fact := m[2]
-				fact, _ = strconv.Unquote(fact)
+			if v == "REMEMBER" {
+				fact := arg
 				facts = append(facts, fact)
 			}
-		}
-
-
-		// look for function calls with integer/id arguments
-		re = regexp.MustCompile(`([A-Z_][A-Z0-9_]*)\((\d+)\)`)
-		matches = re.FindAllStringSubmatch(resp, -1)
-		for _, m := range matches {
-			//fmt.Printf("m: %v\n", m)
-			id, err := strconv.Atoi(m[2])
+			id, err := strconv.Atoi(arg)
 			if err == nil {
-				f := m[1]
-				//fmt.Printf("call %s %d\n", f, id)
-				if f == "INFO" {
+				if v == "INFO" {
 					ids[id] = true
 				}
-				if f == "GEDCOM" {
+				if v == "GEDCOM" {
 					gids[id] = true
 				}
 			}
 		}
+
+
 		num_ids2 := len(ids) + len(gids)
 
 		// we have completed giving the LLM data
