@@ -372,8 +372,30 @@ func (llm *LLM) Chat(userPrompt string, data string) string {
 	return chatResp.Choices[0].Message.Content
 }
 
-
 const functionPrompt = `
+You are an analytical assistant with complete access to my family tree database. Your goal is to answer user queries by iteratively searching for and retrieving information. 
+
+Individuals in the database are referenced by a unique integer ID. You do not have the data yet; you must retrieve it using the commands below.
+
+AVAILABLE DATABASE COMMANDS:
+To query the database, output the following commands. Each command MUST be on a new line with no other text.
+- INFO: id (Returns detailed info for the individual's ID)
+- GEDCOM: id (Returns raw GEDCOM data. Use ONLY if the user explicitly requests it, as it is very large)
+- SEARCH: name (Looks up IDs for people by name)
+- BIRTH: place (Looks up IDs for people by birth location)
+- DEATH: place (Looks up IDs for people by death location)
+
+STATE MANAGEMENT COMMANDS:
+- HINT: text (Passes a thought or note to your next prompt round)
+- REMEMBER: text (Adds a permanent fact to your knowledge for all future rounds)
+
+STRICT RULES:
+1. Output plain text ONLY. Do not use any markdown, bolding, asterisks, or code blocks.
+2. You can issue multiple commands in a single response, provided each is on a separate line.
+3. CRITICAL: Once you issue a database command, you must WAIT. Do not attempt to answer the user's final question until I provide the data back to you in the next prompt.
+4. We will repeat this loop as many times as necessary until you have enough data to form a final answer.`
+
+const mfunctionPrompt = `
 you have complete access to my family tree. You reference individuals by a unique integer ID when needing information.
 You must ask for information on individuals by telling me the IDs and I'll provide the info in the next prompt.
 In your response you must invoke "INFO: id" for each individual id you require details for. 
@@ -385,19 +407,6 @@ We will do this over and over until you have the data you need.
 If you would like to add your own text to the prompt of the next round, say "HINT: text" on a line by itself.
 If you would like to add a fact to your knowledge for all future rounds, say "REMEMBER: text" on a line by itself.
 The when using INFO, SEARCH, BIRTH, DEATH each must be on a new line with no other text.
-Avoid using markdown.`
-
-const xfunctionPrompt = `
-you have complete access to my family tree. You reference individuals by a unique integer ID when needing information.
-You must ask for information on individuals by telling me the IDs and I'll provide the info in the next prompt.
-In your response you must invoke INFO(id) for each individual id you require details for.
-You can request raw GEDCOM data for an indvidual be invoking GEDCOM(id), only use when requested, it takes a lot of space.
-You can lookup IDs for people by name with SEARCH("name"), only use when needed, remember to use quotes.
-You can lookup IDs for people by birth location with BIRTH("place"), only use when needed, remember to use quotes.
-You can lookup IDs for people by death location with DEATH("place"), only use when needed, remember to use quotes.
-We will do this over and over until you have the data you need.
-If you would like to add your own text to the prompt of the next round, say HINT("text") on a line by itself.
-If you would like to add a fact to your knowledge for all future rounds, say REMEMBER("text") on a line by itself.
 Avoid using markdown.`
 
 
@@ -421,6 +430,7 @@ func main() {
 
 	question := flag.Args()[0]
 
+	fmt.Printf("PROMPT: %s\n", question)
 	d := NewData("mrh-tree.ged")
 
 	//url := "http://100.64.0.9:11434/v1/chat/completions"
