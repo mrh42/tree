@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"os"
+	"flag"
 	"time"
 	"encoding/json"
 	"net/http"
@@ -301,8 +302,7 @@ func NewLLM(model, url string) (llm *LLM) {
 
 	llm.model = model
 	llm.url = url
-	return
-	
+	return	
 }
 
 type ChatResponse struct {
@@ -399,8 +399,11 @@ We reference individuals by a unique integer ID.
 `
 
 func main() {
+	var showData bool
+	flag.BoolVar(&showData, "data", false, "show raw data sent to the LLM")
+	flag.Parse()
 
-	question := os.Args[1]
+	question := flag.Args()[0]
 
 	d := NewData("mrh-tree.ged")
 
@@ -434,9 +437,11 @@ func main() {
 			data += j
 		}
 
-		//fmt.Println(data)
+		if showData {
+			fmt.Println(data)
+		}
 		resp := llm.Chat(prompt, data)
-		fmt.Printf("------------------ LLM worked on %d bytes of data for %s ------------\n", len(data), llm.elapsed)
+		fmt.Printf("------------------ %s worked on %d bytes of data for %s ------------\n", llm.model, len(data), llm.elapsed)
 		fmt.Println(resp)
 		fmt.Println("------------------")
 
@@ -444,7 +449,9 @@ func main() {
 		num_ids := len(ids) + len(gids)
 
 		// look for function calls with string arguments
-		re := regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\(("(?:\\.|[^"\\])*")\)$`)
+		//re := regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\(("(?:\\.|[^"\\])*")\)$`)
+		re := regexp.MustCompile(`([A-Z]*)\(("(?:\\.|[^"\\])*")\)`)
+
 		matches := re.FindAllStringSubmatch(resp, -1)
 		for _, m := range matches {
 			//fmt.Printf("m: %v\n", m)
@@ -482,6 +489,7 @@ func main() {
 			
 			fmt.Println("---- no further progress made, getting final answer --------------")
 			resp := llm.Chat(prompt, data)
+			fmt.Printf("------------------ %s worked on %d bytes of data for %s ------------\n", llm.model, len(data), llm.elapsed)
 			fmt.Println(resp)
 			break
 		}
