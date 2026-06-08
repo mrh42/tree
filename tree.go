@@ -382,7 +382,8 @@ You can lookup IDs for people by name with SEARCH("name"), only use when needed,
 You can lookup IDs for people by birth location with BIRTH("place"), only use when needed, remember to use quotes.
 You can lookup IDs for people by death location with DEATH("place"), only use when needed, remember to use quotes.
 We will do this over and over until you have the data you need.
-If you would like to add your own text to the prompt of the next round say REMEMBER("text") on a line by itself. I will return this text to your next invocation, you can use this to prompt yourself.
+If you would like to add your own text to the prompt of the next round, say HINT("text") on a line by itself.
+If you would like to add a fact to your knowledge for all future rounds, say REMEMBER("text") on a line by itself.
 Avoid using markdown.`
 
 
@@ -423,17 +424,24 @@ func main() {
 	gids := make(map[int]bool)
 
 	//ids[0] = true
-	remembered := ""
+	hint := ""
+	facts := make([]string, 0, 10)
 	for {
 		
 		prompt := fmt.Sprintf("My ID is: %d.  %s\n", 0, question)
 		data := ""
 
-		if remembered != "" {
+		if hint != "" {
 			r := make(map[string]string)
-			r["REMEMBER"] = remembered
+			r["HINT"] = hint
 			j, _ := json.Marshal(r)
 			data += string(j) + "\n"
+		}
+		if len(facts) > 0 {
+			r := make(map[string][]string)
+			r["remembered facts"] = facts
+			j, _ := json.Marshal(r)
+			data += string(j) + "\n"			
 		}
 		
 		for id := range(ids) {
@@ -458,7 +466,7 @@ func main() {
 		}
 
 		// forget what we last remembered
-		remembered = ""
+		hint = ""
 		// count current ids, see if we make progress later
 		num_ids := len(ids) + len(gids)
 
@@ -475,10 +483,14 @@ func main() {
 					ids[id] = true
 				}
 			}
+			if m[1] == "HINT" {
+				hint = m[2]
+				hint, _ = strconv.Unquote(hint)
+			}
 			if m[1] == "REMEMBER" {
-				remembered = m[2]
-				remembered, _ = strconv.Unquote(remembered)
-				//fmt.Printf("rem: %s\n", m[
+				fact := m[2]
+				fact, _ = strconv.Unquote(fact)
+				facts = append(facts, fact)
 			}
 		}
 
