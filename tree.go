@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"os"
+	"time"
 	"encoding/json"
 	"net/http"
 	"github.com/lithammer/fuzzysearch/fuzzy"
@@ -310,6 +311,7 @@ type LLM struct {
 
 	systemPrompt string
 	temp      float32
+	elapsed   time.Duration
 }
 
 func NewLLM(model, url string) (llm *LLM) {
@@ -352,6 +354,8 @@ func (llm *LLM) Chat(userPrompt string, data string) string {
 		"temperature":     llm.temp,
 	}
 
+	startt := time.Now()
+
 	jsonData, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("POST", llm.url, bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
@@ -367,6 +371,7 @@ func (llm *LLM) Chat(userPrompt string, data string) string {
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
+	llm.elapsed = time.Now().Sub(startt)
 	
 	var chatResp ChatResponse
 	if err := json.Unmarshal(body, &chatResp); err != nil {
@@ -442,7 +447,7 @@ func main() {
 
 		//fmt.Println(data)
 		resp := llm.Chat(prompt, data)
-		fmt.Println("------------------")
+		fmt.Printf("------------------ LLM worked on %d bytes of data for %s ------------\n", len(data), llm.elapsed)
 		fmt.Println(resp)
 		fmt.Println("------------------")
 
