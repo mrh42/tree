@@ -317,9 +317,7 @@ type ChatResponse struct {
 }
 
 
-
-
-func (llm *LLM) Chat(userPrompt string, data string) string {
+func (llm *LLM) Chat(userPrompt string, data string) (string, error) {
 	apikey := os.Getenv("HUGGING_FACE_HUB_TOKEN")
 
 	userPrompt += " here is the data: " + data
@@ -348,7 +346,7 @@ func (llm *LLM) Chat(userPrompt string, data string) string {
 	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Println("Error:", err)
-		return ""
+		return "", err
 	}
 	defer resp.Body.Close()
 
@@ -358,18 +356,18 @@ func (llm *LLM) Chat(userPrompt string, data string) string {
 	var chatResp ChatResponse
 	if err := json.Unmarshal(body, &chatResp); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to parse JSON response: %v\nRaw: %s\n", err, string(body))
-		return ""
+		return "", err
 	}
 	if chatResp.Error.Message != "" {
 		fmt.Fprintf(os.Stderr, "API Error: %s\n", chatResp.Error.Message)
-		os.Exit(1)
+		return "", nil
 	}
 
 	if len(chatResp.Choices) == 0 {
 		fmt.Fprintf(os.Stderr, "No choices, API Error: %s\n", chatResp.Error.Message)
-		return ""
+		return "", nil
 	}
-	return chatResp.Choices[0].Message.Content
+	return chatResp.Choices[0].Message.Content, nil
 }
 
 const functionPrompt = `
@@ -379,19 +377,19 @@ Individuals in the database are referenced by a unique integer ID. You do not ha
 
 AVAILABLE DATABASE COMMANDS:
 To query the database, output the following commands. Each command MUST be on a new line with no other text.
-- INFO: id (Returns detailed info for the individual's ID)
-- GEDCOM: id (Returns raw GEDCOM data. Use ONLY if the user explicitly requests it, as it is very large)
-- SEARCH: name (Looks up IDs for people by name)
-- BIRTH: place (Looks up IDs for people by birth location)
-- DEATH: place (Looks up IDs for people by death location)
+INFO id (Returns detailed info for the individual's ID)
+GEDCOM id (Returns raw GEDCOM data. Use ONLY if the user explicitly requests it, as it is very large)
+SEARCH name (Looks up IDs for people by name)
+BIRTH place (Looks up IDs for people by birth location)
+DEATH place (Looks up IDs for people by death location)
 
 STATE MANAGEMENT COMMANDS:
-- HINT: text (Passes a thought or note to your next prompt round)
-- REMEMBER: text (Adds a permanent fact to your knowledge for all future rounds)
+HINT text (Passes a thought or note to your next prompt round)
+REMEMBER text (Adds a permanent fact to your knowledge for all future rounds)
 
 STRICT RULES:
 1. Output plain text ONLY. Do not use any markdown, bolding, asterisks, or code blocks.
-2. You can issue multiple commands in a single response, provided each is on a separate line.
+2. Each command must be on a separate line. You can issue multiple commands in a single response.
 3. CRITICAL: Once you issue a database command, you must WAIT. Do not attempt to answer the user's final question until I provide the data back to you in the next prompt.
 4. We will repeat this loop as many times as necessary until you have enough data to form a final answer.`
 
@@ -480,7 +478,18 @@ func main() {
 		if showData {
 			fmt.Println(data)
 		}
-		resp := llm.Chat(prompt, data)
+
+		resp := ""
+		for i := 0; resp == ""; i++ {
+			var err error
+			resp, err = llm.Chat(prompt, data)
+			if resp == "" {
+				fmt.Printf("--- no answer from LLM, tryig again: %s\n", err)
+				if i > 2 {
+					os.Exit(1)
+				}
+			}
+		}
 
 
 		fmt.Printf("------------------ %s worked on %d bytes of data for %s ------------\n", llm.model, len(data), llm.elapsed)
@@ -495,7 +504,7 @@ func main() {
 		num_ids := len(ids) + len(gids)
 
 		// look for function calls with string arguments
-		re := regexp.MustCompile(`(?m)^([A-Z]+): (.+)$`)
+		re := regexp.MustCompile(`(?m)^([A-Z]+) (.+)$`)
 
 		matches := re.FindAllStringSubmatch(resp, -1)
 		for _, m := range matches {
@@ -535,7 +544,7 @@ func main() {
 			llm.temp = 0.1
 			
 			fmt.Println("---- no further progress made, getting final answer --------------")
-			resp := llm.Chat(prompt, data)
+			resp, _ := llm.Chat(prompt, data)
 			fmt.Printf("------------------ %s worked on %d bytes of data for %s ------------\n", llm.model, len(data), llm.elapsed)
 			fmt.Println(resp)
 			break
