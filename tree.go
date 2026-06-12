@@ -420,7 +420,11 @@ func main() {
 	var onlyFinal bool
 
 	model := "google/gemma-4-31B-it"
+	url := "https://router.huggingface.co/v1/chat/completions"
+
+
 	flag.StringVar(&model, "model", model, "LLM model to use")
+	flag.StringVar(&url, "url", url, "inference engine to use")
 
 	flag.BoolVar(&showData, "data", false, "show raw data sent to the LLM")
 	flag.BoolVar(&onlyFinal, "final", false, "show only final results")
@@ -433,7 +437,7 @@ func main() {
 
 	//url := "http://100.64.0.9:11434/v1/chat/completions"
 	//url := "http://100.64.0.128:8000/v1/chat/completions"
-	url := "https://router.huggingface.co/v1/chat/completions"
+	//url := "https://router.huggingface.co/v1/chat/completions"
 	//model := "google/gemma-4-26B-A4B-it"
 	//model := "openai/gpt-oss-120b"
 
