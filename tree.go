@@ -383,36 +383,50 @@ SEARCH name (Looks up IDs for people by name)
 BIRTH place (Looks up IDs for people by birth location)
 DEATH place (Looks up IDs for people by death location)
 
-STATE MANAGEMENT COMMANDS:
+STATE MANAGEMENT COMMANDS, use these to improve performance of the next round:
 HINT text (Passes a thought or note to your next prompt round)
 REMEMBER text (Adds a permanent fact to your knowledge for all future rounds)
+
+for example:
+INFO 42
+SEARCH Tom Jones
+HINT 42 is the son of 57
+REMEMBER the father of 33 is 37
 
 STRICT RULES:
 1. Output plain text ONLY. Do not use any markdown, bolding, asterisks, or code blocks.
 2. Each command must be on a separate line. You can issue multiple commands in a single response.
-3. CRITICAL: Once you issue a database command, you must WAIT. Do not attempt to answer the user's final question until I provide the data back to you in the next prompt.
-4. We will repeat this loop as many times as necessary until you have enough data to form a final answer.`
-
-const mfunctionPrompt = `
-you have complete access to my family tree. You reference individuals by a unique integer ID when needing information.
-You must ask for information on individuals by telling me the IDs and I'll provide the info in the next prompt.
-In your response you must invoke "INFO: id" for each individual id you require details for. 
-You can request raw GEDCOM data for an indvidual be invoking "GEDCOM: id", only use when requested, it takes a lot of space.
-You can lookup IDs for people by name with "SEARCH: name", only use when needed.
-You can lookup IDs for people by birth location with "BIRTH: place", only use when needed.
-You can lookup IDs for people by death location with "DEATH: place", only use when needed.
-We will do this over and over until you have the data you need.
-If you would like to add your own text to the prompt of the next round, say "HINT: text" on a line by itself.
-If you would like to add a fact to your knowledge for all future rounds, say "REMEMBER: text" on a line by itself.
-The when using INFO, SEARCH, BIRTH, DEATH each must be on a new line with no other text.
-Avoid using markdown.`
+3. CRITICAL: Once you issue database commands, you must WAIT. Do not attempt to answer the user's final question until I provide the data back to you in the next prompt.
+4. We will repeat this loop as many times as necessary until you have enough data to form a final answer.
+5. In the final answer, you will need names and other infomation for the individuals involved, not just the ID numbers.
+`
 
 
-const finalPrompt = `Provide a detailed response. Avoid markdown.  Nicely format for a text terminal window.
+
+const xxfinalPrompt = `
+Answer the user's question using the supplied family-tree data.
+
+Include only information that directly helps answer the question.
+State the main conclusion first, followed by the supporting genealogical facts.
+Identify uncertainty or conflicting information explicitly.
+Do not discuss your process, the supplied data, or information that is unrelated to the question.
+
+Use concise paragraphs. Do not attempt to produce a comprehensive biography unless the user requested one.
+Stop after the question has been fully answered.
+
+IMPORTANT: If you don't have enough information to answer the question, or find a contradiction, stop and state the problem.
+
+Avoid markdown.  Format for a text terminal window.
+`
+
+const finalPrompt = `Answer the user's question using the supplied family-tree data.
+State the main conclusion first, followed by the supporting genealogical facts.
+Stop after the question has been fully answered.
+Avoid markdown, format for a terminal window.
 If you have marriage or divorce dates for couples, you may refer to them as spouses, husband, wife.
 When no marriage date exists, you must only use the term partner.
 When the user asks generically about a person, provide their name and dates and places of birth and death.
-Here is structured information from my family tree, individuals are linked by ID.
+IMPORTANT: If you don't have enough information to answer the question, or find a contradiction, stop and state the problem.
 `
 
 func main() {
@@ -452,7 +466,8 @@ func main() {
 	//ids[0] = true
 	hint := ""
 	facts := make([]string, 0, 10)
-	for {
+	final := false
+	for round := 0; round < 100; round++ {
 		
 		prompt := fmt.Sprintf("My ID is: %d.  %s\n", 0, question)
 		data := ""
@@ -483,6 +498,12 @@ func main() {
 			fmt.Println(data)
 		}
 
+		if final {
+			llm.systemPrompt = finalPrompt
+			llm.temp = 0.1
+			
+			fmt.Println("---- no further progress made, getting final answer --------------")
+		}
 		resp := ""
 		for i := 0; resp == ""; i++ {
 			var err error
@@ -497,8 +518,9 @@ func main() {
 
 
 		fmt.Printf("------------------ %s worked on %d bytes of data for %s ------------\n", llm.model, len(data), llm.elapsed)
-		if !onlyFinal {
+		if !onlyFinal || final {
 			fmt.Println(resp)
+			if final {break}
 			fmt.Println("------------------")
 		}
 
@@ -544,16 +566,9 @@ func main() {
 
 		// we have completed giving the LLM data
 		if num_ids2 == num_ids {
-			llm.systemPrompt = finalPrompt
-			llm.temp = 0.1
-			
-			fmt.Println("---- no further progress made, getting final answer --------------")
-			resp, _ := llm.Chat(prompt, data)
-			fmt.Printf("------------------ %s worked on %d bytes of data for %s ------------\n", llm.model, len(data), llm.elapsed)
-			fmt.Println(resp)
-			break
+			final = true
 		} else {
-			fmt.Printf("----- Number of added records for next LLM round: %d\n", num_ids2 - num_ids)
+			fmt.Printf("----- New records added by LLM round %d: %d (total: %d)\n", round, num_ids2 - num_ids, num_ids2)
 		}
 	}
 }
